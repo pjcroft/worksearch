@@ -17,6 +17,27 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:va
 .brand{display:flex;align-items:baseline;gap:.8rem;margin-bottom:.7rem}
 .brand h1{margin:0;font-size:1.15rem}.brand h1 span{color:var(--accent)}
 .brand small{color:var(--muted)}
+.rootbtn{display:inline-flex;align-items:center;gap:.5rem;max-width:min(560px,70vw);background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:.25rem .65rem;font:inherit;font-size:.8rem;cursor:pointer}
+.rootbtn:hover{border-color:var(--accent);color:var(--text)}
+.rootbtn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.rootbtn b{color:var(--accent);font-weight:600;white-space:nowrap}
+.banner .btn{margin-left:.6rem}
+#fdlg{width:min(680px,94vw)}
+#fdlg h3{margin:.1rem 0 .2rem}
+.frow{display:flex;gap:.5rem;margin:.6rem 0;align-items:center}
+.frow input[type=text]{flex:1;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:.5rem .7rem;font:inherit;font-size:.9rem}
+.frow input[type=text]:focus{outline:none;border-color:var(--accent)}
+.frow select{flex:1;max-width:none}
+.flist{height:260px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.flist div{padding:.45rem .8rem;border-bottom:1px solid rgba(38,54,90,.5);cursor:pointer;font-size:.88rem;display:flex;gap:.55rem}
+.flist div:hover{background:var(--panel2)}
+.flist div:before{content:"📁";opacity:.8}
+.flist div.up:before{content:"↰"}
+.flist .none{cursor:default;color:var(--muted);font-style:italic}.flist .none:before{content:""}.flist .none:hover{background:none}
+.fnote{font-size:.82rem;color:var(--muted);margin:.6rem 0}
+.fnote.bad{color:#fca5a5}
+.fbtns{display:flex;gap:.6rem;justify-content:flex-end;margin-top:.8rem}
+.btn.primary{background:rgba(34,211,238,.16);border-color:var(--accent);color:var(--accent)}
 .search{position:relative}
 .search input{width:100%;padding:.95rem 1.1rem .95rem 2.8rem;font:inherit;font-size:1.15rem;color:var(--text);background:var(--panel);border:1.5px solid var(--line);border-radius:14px;outline:none}
 .search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(34,211,238,.15)}
@@ -65,7 +86,7 @@ dialog small{color:var(--muted)}
 </head>
 <body>
 <div class="top"><div class="wrap">
-  <div class="brand"><h1>Work<span>Search</span></h1><small id="rootname"></small></div>
+  <div class="brand"><h1>Work<span>Search</span></h1><button class="rootbtn" id="rootname" title="Change the folder WorkSearch searches"><b>Folder:</b><span></span></button></div>
   <div class="search"><input id="q" type="search" placeholder="Search file names and contents…  (press / to focus)" autocomplete="off" autofocus></div>
   <div class="filters" id="filters">
     <button class="chip on" data-t="">All</button>
@@ -88,6 +109,15 @@ dialog small{color:var(--muted)}
   <a id="problems" style="display:none"></a><a id="rescan">Rescan now</a><a id="quit" title="Stop WorkSearch (it stops indexing too)">Quit</a>
 </div></div>
 <div class="toast" id="toast"></div>
+<dialog id="fdlg">
+  <h3>Choose the folder to search</h3>
+  <div class="fnote">WorkSearch will read everything inside this folder. Your files are never changed.</div>
+  <div class="frow"><select id="fvol" title="Mounted drives and shares"><option value="">Mounted drives and shares…</option></select></div>
+  <div class="frow"><input type="text" id="fpath" spellcheck="false" placeholder="/Volumes/Qnap/Work"><button class="btn" id="fgo">Go</button></div>
+  <div class="flist" id="flist"></div>
+  <div class="fnote" id="fmsg"></div>
+  <div class="fbtns"><button class="btn" id="fcancel">Cancel</button><button class="btn primary" id="fuse">Use this folder</button></div>
+</dialog>
 <dialog id="dlg"><h3 style="margin-top:0">Files with limited search</h3><small>Name-only files can be found by name but not by contents. Errors could not be read at all.</small><ul id="plist"></ul><button class="btn" onclick="dlg.close()">Close</button></dialog>
 <script>
 const TOKEN='__TOKEN__';
@@ -163,11 +193,41 @@ $('#rescan').onclick=async()=>{await fetch('/api/rescan',{method:'POST',headers:
 $('#quit').onclick=async()=>{if(!confirm('Quit WorkSearch? Indexing stops until you open it again.'))return;
   await fetch('/api/quit',{method:'POST',headers:{'X-WS-Token':TOKEN}});
   document.body.innerHTML='<div class="empty" style="padding-top:20vh">WorkSearch has stopped. Open it again from your Applications to search.</div>';};
+/* ---- folder picker ---- */
+let fcur='';
+const fdlg=$('#fdlg');
+async function fbrowse(path){
+  const r=await (await fetch('/api/browse?'+new URLSearchParams({path:path||''}))).json();
+  fcur=r.path; $('#fpath').value=r.path;
+  const L=$('#flist'); L.innerHTML='';
+  if(r.parent){const d=document.createElement('div');d.className='up';d.textContent='.. (up one level)';d.onclick=()=>fbrowse(r.parent);L.appendChild(d);}
+  r.dirs.forEach(n=>{const d=document.createElement('div');d.textContent=n;d.onclick=()=>fbrowse(r.path.replace(/\/$/,'')+'/'+n);L.appendChild(d);});
+  if(!r.dirs.length&&!r.error){const d=document.createElement('div');d.className='none';d.textContent='No sub-folders here. You can use this folder.';L.appendChild(d);}
+  const m=$('#fmsg'); m.className='fnote'+(r.error?' bad':''); m.textContent=r.error||(r.truncated?'Showing the first 1000 folders.':'');
+  const sel=$('#fvol'); sel.innerHTML='<option value="">Mounted drives and shares…</option>'+r.volumes.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+}
+async function openFolderDialog(){
+  fdlg.showModal(); await fbrowse($('#rootname').dataset.root||'');
+}
+$('#rootname').onclick=openFolderDialog;
+$('#fvol').onchange=e=>{if(e.target.value)fbrowse(e.target.value);};
+$('#fgo').onclick=()=>fbrowse($('#fpath').value.trim());
+$('#fpath').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();fbrowse($('#fpath').value.trim());}});
+$('#fcancel').onclick=()=>fdlg.close();
+$('#fuse').onclick=async()=>{
+  const path=$('#fpath').value.trim(), cur=$('#rootname').dataset.root||'';
+  if(path!==cur&&!confirm('Search '+path+'?\n\nWorkSearch will forget what it indexed from the old folder and read this one from scratch.'))return;
+  const r=await fetch('/api/setroot',{method:'POST',headers:{'X-WS-Token':TOKEN,'Content-Type':'application/json'},body:JSON.stringify({path})});
+  const j=await r.json();
+  if(!r.ok){const m=$('#fmsg');m.className='fnote bad';m.textContent=j.error||'Could not use that folder.';return;}
+  fdlg.close(); toast(path===cur?'Rescanning…':'Folder changed. Reading files…');
+  items=[];lastFiles=-1;await status();await folders();$('#q').value='';run();
+};
 let lastFiles=-1;
 async function status(){
   try{
     const s=await (await fetch('/api/status')).json();
-    $('#rootname').textContent=s.root; $('#rootname').dataset.root=s.root;
+    $('#rootname').querySelector('span').textContent='\u202a'+s.root; $('#rootname').dataset.root=s.root; $('#rootname').title=s.root+'\n(click to change)';
     if(s.platform==='linux'&&REVEAL!=='Show in folder'){REVEAL='Show in folder';if(items.length)render({total:items.length,results:[]},lastQ||'');}
     const busy=s.phase!=='idle'||s.ocr_left>0;
     let t=`<span class="dot${busy?' busy':''}"></span>`;
@@ -178,7 +238,7 @@ async function status(){
     if(s.phase==='idle'&&s.last_scan)t+=` · last scan ${new Date(s.last_scan*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
     $('#stat').innerHTML=t;
     const b=[];
-    if(!s.root_ok||s.error)b.push(`<div class="banner bad">${esc(s.error||'Folder not available')}</div>`);
+    if(!s.root_ok||s.error)b.push(`<div class="banner bad">${esc(s.error||'Folder not available')}<button class="btn" onclick="openFolderDialog()">Change folder…</button></div>`);
     if(!s.tesseract)b.push(`<div class="banner">Scanned PDFs are not being read yet because Tesseract (OCR) is not installed. In a terminal run: <b>${s.platform==='mac'?'brew install tesseract':'sudo apt install tesseract-ocr'}</b>, then quit and reopen WorkSearch.</div>`);
     $('#banners').innerHTML=b.join('');
     const p=s.errors+s.name_only;const a=$('#problems');

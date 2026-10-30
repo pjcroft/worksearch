@@ -105,6 +105,70 @@ def find_tesseract():
     return None
 
 
+def candidate_roots():
+    """Places a work folder is likely to be: mounted drives and network shares, plus the home folder."""
+    homes = [str(Path.home())]
+    roots = []
+    if IS_MAC:
+        bases = ['/Volumes']
+    else:
+        user = os.environ.get('USER') or Path.home().name
+        bases = ['/mnt', f'/media/{user}', f'/run/media/{user}', f'/run/user/{os.getuid()}/gvfs']
+    for b in bases:
+        try:
+            for e in sorted(os.scandir(b), key=lambda x: x.name.lower()):
+                if not e.name.startswith('.') and e.is_dir():
+                    roots.append(e.path)
+        except OSError:
+            pass
+    return roots + homes
+
+
+def describe_root_problem(root):
+    """Why can't the folder be read? Returns a message that says what to do, or '' if it is fine."""
+    try:
+        with os.scandir(root):
+            return ''
+    except FileNotFoundError:
+        where = [os.path.basename(r) for r in candidate_roots() if r != str(Path.home())]
+        hint = f' Drives that are mounted right now: {", ".join(where)}.' if where else ' No network drives are mounted right now.'
+        return f'Folder not found: {root}. Is the NAS mounted?{hint} Use "Change folder" to pick the right one.'
+    except NotADirectoryError:
+        return f'{root} is a file, not a folder. Use "Change folder" to pick a folder.'
+    except PermissionError:
+        if IS_MAC:
+            py = os.path.realpath(sys.executable)
+            return (f'macOS is not letting WorkSearch read {root}. Open System Settings > Privacy & Security > '
+                    f'Full Disk Access, add the program {py} (use Cmd+Shift+G in the file picker to type its path), '
+                    f'then quit and reopen WorkSearch.')
+        return f'Permission denied reading {root}. Check that your user can open this folder.'
+    except OSError as ex:
+        return f'Could not read {root}: {ex.strerror or ex}'
+
+
+def browse(path):
+    """List the sub-folders of a folder, for the folder picker."""
+    path = os.path.expanduser(path or '')
+    if not path or not os.path.isdir(path):
+        path = str(Path.home())
+    path = os.path.normpath(path)
+    out = {'path': path, 'parent': os.path.dirname(path) if path != '/' else None, 'dirs': [], 'volumes': candidate_roots()}
+    try:
+        names = []
+        with os.scandir(path) as it:
+            for e in it:
+                try:
+                    if e.is_dir() and not e.name.startswith(('.', '@', '$', '#')):
+                        names.append(e.name)
+                except OSError:
+                    continue
+        out['dirs'] = sorted(names, key=str.lower)[:1000]
+        out['truncated'] = len(names) > 1000
+    except OSError as ex:
+        out['error'] = describe_root_problem(path) or str(ex)
+    return out
+
+
 # ----------------------------------------------------------------------------------------
 # Text extraction. Each extractor returns a list of (page, label, text, needs_ocr).
 # ----------------------------------------------------------------------------------------
@@ -427,6 +491,8 @@ class Indexer:
         self.wlock = threading.Lock()
         self.wake = threading.Event()
         self.stop = threading.Event()
+        self.abort = threading.Event()      # set while the folder is being switched: running scan stops early
+        self.scan_lock = threading.Lock()   # only one scan (or folder switch) at a time
         self.tess = find_tesseract()
         self.ocr_errors = 0
 
@@ -435,6 +501,8 @@ class Indexer:
         self.walk_errors = 0
         out, stack = [], [self.root]
         while stack:
+            if self.abort.is_set():
+                return None
             d = stack.pop()
             try:
                 with os.scandir(d) as it:
@@ -459,12 +527,20 @@ class Indexer:
         return out
 
     def scan(self):
+        with self.scan_lock:
+            self._scan()
+
+    def _scan(self):
         st = self.state
         st.update(error='', done=0, total=0)
-        if not os.path.isdir(self.root):
-            st.update(phase='idle', root_ok=False, error=f'Folder not found: {self.root}. Is the NAS mounted?')
+        problem = describe_root_problem(self.root)
+        if problem:
+            st.update(phase='idle', root_ok=False, error=problem)
             return
         entries = self.walk()
+        if entries is None:  # folder was switched while listing
+            st.update(phase='idle', current='')
+            return
         conn = connect()
         try:
             existing = {r['path']: r for r in conn.execute('SELECT id,path,size,mtime,status FROM files')}
@@ -486,13 +562,15 @@ class Indexer:
             todo.sort(key=lambda t: -t[2])  # newest first
             st.update(phase='reading', done=0, total=len(todo))
             for i, (p, size, mtime) in enumerate(todo, 1):
-                if self.stop.is_set():
+                if self.stop.is_set() or self.abort.is_set():
                     break
                 st.update(done=i, current=os.path.relpath(p, self.root))
                 try:
                     self.index_file(conn, p, size, mtime)
                 except Exception as ex:  # one bad file must not stop the scan
                     log('index failed', p, ex)
+            if self.abort.is_set():
+                return
             conn.execute("INSERT OR REPLACE INTO meta VALUES('last_scan', ?)", (str(time.time()),))
             conn.commit()
             st['last_scan'] = time.time()
@@ -558,6 +636,40 @@ class Indexer:
             conn.execute('UPDATE files SET pages=?,row_lo=?,row_hi=?,ocr_left=? WHERE id=?',
                          (len(rows), lo, hi, len(ocr) if self.tess else 0, fid))
             conn.commit()
+
+    def set_root(self, new_root):
+        """Switch to another folder. The old index is discarded (it describes the old folder). Returns an error or ''."""
+        new_root = os.path.normpath(os.path.expanduser(new_root.strip()))
+        if not os.path.isabs(new_root):
+            return 'Please give a full path, such as /Volumes/Qnap/Work.'
+        if new_root == '/':
+            return 'Pick a specific folder, not the whole disk.'
+        problem = describe_root_problem(new_root)
+        if problem:
+            return problem
+        if new_root == self.root:
+            self.wake.set()
+            return ''
+        self.abort.set()                 # ask a running scan to stop...
+        with self.scan_lock:             # ...and wait until it has
+            with self.wlock:
+                conn = connect()
+                try:
+                    conn.execute('DELETE FROM docs')
+                    conn.execute('DELETE FROM files')
+                    conn.execute('DELETE FROM ocr_queue')
+                    conn.execute("DELETE FROM meta WHERE k='last_scan'")
+                    conn.commit()
+                finally:
+                    conn.close()
+            self.root = new_root
+            self.cfg['root'] = new_root
+            save_config(self.cfg)
+            self.state.update(phase='idle', done=0, total=0, current='', last_scan=None, error='', root_ok=True)
+            self.abort.clear()
+        log(f'folder changed to {new_root}')
+        self.wake.set()
+        return ''
 
     def new_pool(self, workers):
         return cf.ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn'),
@@ -771,6 +883,8 @@ class Handler(BaseHTTPRequestHandler):
                 cols = conn.execute("SELECT substr(rel,1,instr(rel||'/','/')-1) AS top, count(*) n FROM files "
                                     "WHERE instr(rel,'/')>0 GROUP BY top ORDER BY top COLLATE NOCASE").fetchall()
                 return self._send(200, [{'name': r['top'], 'n': r['n']} for r in cols])
+            if u.path == '/api/browse':
+                return self._send(200, browse(q.get('path', '')))
             if u.path == '/api/problems':
                 rows = conn.execute("SELECT id,rel,status,note FROM files WHERE status IN ('error','name-only') "
                                     "ORDER BY status, rel LIMIT 500").fetchall()
@@ -787,6 +901,9 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b'{}')
         except ValueError:
             body = {}
+        if self.path == '/api/setroot':
+            err = self.ix.set_root(str(body.get('path', '')))
+            return self._send(400 if err else 200, {'error': err} if err else {'ok': True, 'root': self.ix.root})
         if self.path == '/api/quit':
             self._send(200, {'ok': True})
             threading.Thread(target=self.server.shutdown, daemon=True).start()

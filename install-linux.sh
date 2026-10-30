@@ -77,7 +77,7 @@ if [ -z "$ROOT" ]; then
   ROOT="$(ask "Folder to search (your mounted QNAP Work folder)" "${guess:-/mnt/qnap/Work}")"
 fi
 ROOT="${ROOT/#\~/$HOME}"
-[ -d "$ROOT" ] || warn "$ROOT is not there right now. WorkSearch will start indexing once it is mounted."
+[ -d "$ROOT" ] || warn "$ROOT is not there right now. You can pick the right folder inside WorkSearch with the Folder: button."
 
 # ---------- 3. program files + Python environment ----------
 say "Installing WorkSearch into $DATA"

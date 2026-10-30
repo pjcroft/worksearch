@@ -43,6 +43,7 @@ The installer uses `apt` to add Tesseract and the Python tools it needs (it asks
 - **Open** opens the file in its usual app. **Show in Finder** (or **Show in folder** on Linux) shows where it is. **Copy path** copies the full path.
 - Keyboard: `/` jumps to the search box, the arrow keys move between results, and Enter opens the selected one.
 - With an empty search box you see the most recently changed files.
+- **Change the folder** any time: click the **Folder:** button next to the title. Pick from the list of mounted drives, type or paste a path, or click through the folders, then choose **Use this folder**. WorkSearch forgets the old index and reads the new folder from scratch. The choice is remembered.
 - The bar at the bottom shows indexing progress. **Rescan now** checks for new and changed files right away. Otherwise WorkSearch checks every 4 hours while it is running. **Quit** stops it.
 
 ### The first scan
@@ -53,9 +54,11 @@ The first scan reads every file, so on 20 to 40 GB expect it to take a few hours
 
 The link at the bottom lists files that can only be found by name. These are old formats (`.doc`, `.xls`, `.ppt`, Outlook `.msg`), CAD and image files, files over 400 MB, and files that couldn't be read because they're password protected or damaged.
 
-### If the QNAP isn't mounted
+### If the folder can't be found or read
 
-WorkSearch shows a warning and leaves the index alone, so you can still search everything that was indexed. Opening a file needs the QNAP to be mounted again.
+WorkSearch shows a red message with a **Change folder…** button and lists the drives that are mounted right now, so you can pick the right one. If the QNAP simply isn't mounted at the moment, the index is left alone and you can still search everything that was indexed. Opening a file needs the QNAP mounted again. While the folder is missing, WorkSearch looks again every minute.
+
+**macOS says it can't read a folder that is clearly mounted?** macOS can block programs from network drives. Open **System Settings → Privacy & Security → Full Disk Access**, click **+**, press **Cmd+Shift+G**, and paste the program path shown in the red message, then quit and reopen WorkSearch.
 
 ## Settings
 
@@ -65,14 +68,14 @@ Settings are in `config.json` in the data folder:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `root` | `/Volumes/Qnap/Work` | folder to search |
+| `root` | `/Volumes/Qnap/Work` | folder to search (easier to change from the page with the **Folder:** button) |
 | `port` | `8777` | port for the search page |
 | `rescan_hours` | `4` | how often to look for changes |
 | `ocr_lang` | `eng` | Tesseract language(s), for example `eng+ita` (Mac: `brew install tesseract-lang`; Ubuntu: `sudo apt install tesseract-ocr-ita`) |
 | `ocr_workers` | `0` (auto) | how many pages to OCR at once |
 | `max_extract_mb` | `400` | larger files are indexed by name only |
 
-Quit WorkSearch and reopen it after changing a setting. To search a different folder, run the installer again. The index, `worksearch.log` and `server.log` are in the same data folder.
+Quit WorkSearch and reopen it after editing a setting by hand. The index, `worksearch.log` and `server.log` are in the same data folder.
 
 ## Mounting the QNAP on Ubuntu
 
