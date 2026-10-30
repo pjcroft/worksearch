@@ -1,0 +1,1 @@
+pymupdf>=1.23,<2  # 2.x pulls in onnxruntime, which tries to send usage data to Microsoft
