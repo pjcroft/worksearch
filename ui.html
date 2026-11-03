@@ -14,7 +14,7 @@
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:var(--bg);min-height:100vh}
 .top{position:sticky;top:0;z-index:5;background:linear-gradient(var(--bg) 82%,transparent);padding:1.1rem 1.5rem .8rem}
 .wrap{max-width:1000px;margin:0 auto}
-.brand{display:flex;align-items:baseline;gap:.8rem;margin-bottom:.7rem}
+.brand{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem .8rem;margin-bottom:.7rem}
 .brand h1{margin:0;font-size:1.15rem}.brand h1 span{color:var(--accent)}
 .brand small{color:var(--muted)}
 .rootbtn{display:inline-flex;align-items:center;gap:.5rem;max-width:min(560px,70vw);background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:.25rem .65rem;font:inherit;font-size:.8rem;cursor:pointer}
@@ -82,11 +82,45 @@ dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);bo
 dialog::backdrop{background:rgba(0,0,0,.55)}
 dialog li{margin:.25rem 0;font-size:.85rem;word-break:break-all}
 dialog small{color:var(--muted)}
+.mode{margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.mode button{appearance:none;border:0;background:var(--panel);color:var(--muted);padding:.32rem .8rem;font:inherit;font-size:.82rem;cursor:pointer}
+.mode button.on{background:rgba(34,211,238,.16);color:var(--accent)}
+.mode button[data-m=ask].on{background:rgba(167,139,250,.2);color:#c4b5fd}
+body.ask .search input:focus{border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.18)}
+body.ask .search:before{content:"✦";font-size:1.15rem;top:1.05rem;color:#a78bfa}
+.askonly{display:none!important}body.ask .askonly{display:inline-flex!important}
+body.ask .searchonly{display:none!important}
+body.ask #thread{display:block!important}
+#aimodel{max-width:300px}
+.thread{margin:.3rem 0 .8rem}
+.turn{background:var(--panel);border:1px solid rgba(167,139,250,.35);border-radius:12px;padding:.85rem 1.1rem;margin-bottom:.7rem}
+.turn .tq{font-weight:650;color:#ddd6fe;margin-bottom:.4rem}
+.turn .ta{line-height:1.6;font-size:.95rem}
+.turn .ta p{margin:.45rem 0}.turn .ta ul,.turn .ta ol{margin:.4rem 0;padding-left:1.4rem}.turn .ta li{margin:.2rem 0}
+.turn .ta h4{margin:.7rem 0 .3rem;font-size:.95rem;color:var(--tan)}
+.turn .ta code{background:var(--bg);padding:0 .3rem;border-radius:4px;font-size:.88em}
+.turn .ta table{border-collapse:collapse;margin:.5rem 0;font-size:.88rem}.turn .ta td,.turn .ta th{border:1px solid var(--line);padding:.25rem .5rem;text-align:left}
+.turn .ts{color:var(--muted);font-size:.8rem;margin-top:.5rem;display:flex;gap:1rem;align-items:center;flex-wrap:wrap}
+.turn .ts.busy:before{content:"";width:8px;height:8px;border-radius:50%;background:#a78bfa;animation:p 1.2s infinite}
+.turn .err{color:#fca5a5}
+a.cite{display:inline-block;min-width:1.25rem;text-align:center;font-size:.72rem;font-weight:700;line-height:1.2rem;padding:0 .25rem;margin:0 .1rem;border-radius:5px;background:rgba(167,139,250,.22);color:#ddd6fe;cursor:pointer;vertical-align:1px}
+a.cite:hover{background:#a78bfa;color:#111}
+.num{flex:none;font-size:.72rem;font-weight:800;color:#ddd6fe;background:rgba(167,139,250,.22);border-radius:6px;padding:.28rem .45rem}
+.res.flash{animation:fl 1.4s}@keyframes fl{0%,40%{border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.3)}}
+#aidlg{width:min(760px,94vw);max-height:86vh}
+#aidlg label{display:block;font-size:.82rem;color:var(--muted);margin-top:.8rem}
+.mlist{height:300px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.mlist div{padding:.45rem .8rem;border-bottom:1px solid rgba(38,54,90,.5);cursor:pointer;font-size:.86rem;display:flex;gap:.8rem;align-items:baseline}
+.mlist div:hover{background:var(--panel2)}.mlist div.on{background:rgba(167,139,250,.18)}
+.mlist .mn{flex:1;min-width:0}.mlist .mn small{display:block;color:var(--muted);word-break:break-all}
+.mlist .mp{flex:none;color:var(--muted);font-size:.78rem;text-align:right;white-space:nowrap}
+#aidlg details{margin-top:.7rem;font-size:.85rem;color:var(--muted)}
 </style>
 </head>
 <body>
 <div class="top"><div class="wrap">
-  <div class="brand"><h1>Work<span>Search</span></h1><button class="rootbtn" id="rootname" title="Change the folder WorkSearch searches"><b>Folder:</b><span></span></button></div>
+  <div class="brand"><h1>Work<span>Search</span></h1><button class="rootbtn" id="rootname" title="Change the folder WorkSearch searches"><b>Folder:</b><span></span></button>
+    <div class="mode" id="mode"><button data-m="search" class="on">Search</button><button data-m="ask" title="Ask a question and get an answer from your files">✦ Ask AI</button></div></div>
   <div class="search"><input id="q" type="search" placeholder="Search file names and contents…  (press / to focus)" autocomplete="off" autofocus></div>
   <div class="filters" id="filters">
     <button class="chip on" data-t="">All</button>
@@ -95,11 +129,15 @@ dialog small{color:var(--muted)}
     <button class="chip" data-t="email">Email</button><button class="chip" data-t="cad">CAD</button><button class="chip" data-t="image">Images</button>
     <select id="folder" title="Limit to a top-level folder"><option value="">All folders</option></select>
     <span class="sp"></span>
-    <select id="sort"><option value="relevance">Best match</option><option value="newest">Newest first</option></select>
+    <select id="aimodel" class="askonly" title="AI model (choose More models… for the full list)"></select>
+    <button class="btn askonly" id="aiset" title="API key and model">⚙ AI settings</button>
+    <button class="btn askonly" id="newq" title="Forget this conversation and start fresh">New question</button>
+    <select id="sort" class="searchonly"><option value="relevance">Best match</option><option value="newest">Newest first</option></select>
   </div>
 </div></div>
 <main>
   <div id="banners"></div>
+  <div class="thread askonly" id="thread"></div>
   <div class="count" id="count"></div>
   <div id="results"></div>
   <button class="btn more" id="more" style="display:none">Show more</button>
@@ -117,6 +155,21 @@ dialog small{color:var(--muted)}
   <div class="flist" id="flist"></div>
   <div class="fnote" id="fmsg"></div>
   <div class="fbtns"><button class="btn" id="fcancel">Cancel</button><button class="btn primary" id="fuse">Use this folder</button></div>
+</dialog>
+<dialog id="aidlg">
+  <h3 style="margin:.1rem 0 .2rem">AI settings</h3>
+  <div class="fnote">Ask AI searches your files for pages that look relevant and sends them, with your question, to the model you pick here. Get a key at <b>openrouter.ai/keys</b>. Each question costs whatever that model charges for about 20 pages of text.</div>
+  <label for="aikey">OpenRouter API key</label>
+  <div class="frow"><input type="text" id="aikey" spellcheck="false" autocomplete="off" placeholder="sk-or-v1-…"><button class="btn" id="aikeyclear" title="Remove the saved key">Clear</button></div>
+  <label for="aifilter">Model <span id="aicur"></span></label>
+  <div class="frow"><input type="text" id="aifilter" spellcheck="false" placeholder="Filter, e.g. claude, gpt, gemini, llama, free"><select id="aisort" style="flex:none"><option value="new">Newest</option><option value="cheap">Cheapest</option><option value="name">Name</option></select></div>
+  <div class="mlist" id="mlist"></div>
+  <div class="fnote" id="aimsg"></div>
+  <details><summary>Advanced: use a different service</summary>
+    <div class="fnote">Any OpenAI-compatible API works, for example Ollama (<code>http://localhost:11434/v1</code>) or LM Studio (<code>http://localhost:1234/v1</code>) for a model running on this computer.</div>
+    <div class="frow"><input type="text" id="aibase" spellcheck="false" placeholder="https://openrouter.ai/api/v1"><button class="btn" id="aibasego">Load models</button></div>
+  </details>
+  <div class="fbtns"><button class="btn" id="aicancel">Cancel</button><button class="btn primary" id="aisave">Save</button></div>
 </dialog>
 <dialog id="dlg"><h3 style="margin-top:0">Files with limited search</h3><small>Name-only files can be found by name but not by contents. Errors could not be read at all.</small><ul id="plist"></ul><button class="btn" onclick="dlg.close()">Close</button></dialog>
 <script>
@@ -139,6 +192,7 @@ function date(t){return new Date(t*1000).toLocaleDateString(undefined,{year:'num
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
 
 async function run(reset=true){
+  if(MODE==='ask')return;
   const q=$('#q').value.trim(), my=++reqId;
   if(reset){offset=0;items=[];sel=-1;}
   const url='/api/search?'+new URLSearchParams({q,type,folder:$('#folder').value,sort:$('#sort').value,limit:LIMIT,offset});
@@ -149,21 +203,23 @@ async function run(reset=true){
   offset=items.length;
   render(r,q);
 }
+function card(f,i,ts){
+    const hits=f.hits.map(h=>`<div class="snip"><b>${esc(h.label)}</b>${snip(h.snip)}</div>`).join('');
+    const warn=f.status==='error'?`<span class="warn">Could not read: ${esc(f.note)}</span>`:f.status==='name-only'?`<span class="warn" title="${esc(f.note)}">name only</span>`:f.ocr_left?`<span class="warn">${f.ocr_left} scanned page${f.ocr_left===1?'':'s'} still being read</span>`:'';
+    return `<div class="res${i===sel?' sel':''}" data-i="${i}"><div class="rh">${f.n?`<span class="num">${f.n}</span>`:''}<span class="ext k-${f.kind}">${esc(f.ext||'file')}</span><div><div class="nm">${hi(f.name,ts)}</div><div class="path">${hi(f.dir||'/',ts)}</div></div></div>${hits}
+      <div class="meta"><span>${date(f.mtime)}</span><span>${size(f.size)}</span>${warn}<span class="act"><button class="btn" data-a="open">Open</button><button class="btn" data-a="reveal">${REVEAL}</button><button class="btn" data-a="copy">Copy path</button>${aiReady()&&f.status!=='name-only'?'<button class="btn" data-a="sum" title="Ask the AI to summarise this file">✦ Summarise</button>':''}</span></div></div>`;
+  }
 function render(r,q){
   const ts=terms(q);
   if(!r.recent&&!r.total&&q.replace(/["\s]/g,'').length<3){$('#count').textContent='Keep typing…';$('#results').innerHTML='';$('#more').style.display='none';return;}
   $('#count').textContent=r.error?('Search problem: '+r.error):r.recent?`Recently changed files (${r.total.toLocaleString()} total)`:`${r.total.toLocaleString()}${r.capped?'+':''} file${r.total===1&&!r.capped?'':'s'} match${r.total===1&&!r.capped?'es':''}${r.capped?' (showing the best; add a word to narrow it down)':''}`;
-  $('#results').innerHTML=items.length?items.map((f,i)=>{
-    const hits=f.hits.map(h=>`<div class="snip"><b>${esc(h.label)}</b>${snip(h.snip)}</div>`).join('');
-    const warn=f.status==='error'?`<span class="warn">Could not read: ${esc(f.note)}</span>`:f.status==='name-only'?`<span class="warn" title="${esc(f.note)}">name only</span>`:f.ocr_left?`<span class="warn">${f.ocr_left} scanned page${f.ocr_left===1?'':'s'} still being read</span>`:'';
-    return `<div class="res${i===sel?' sel':''}" data-i="${i}"><div class="rh"><span class="ext k-${f.kind}">${esc(f.ext||'file')}</span><div><div class="nm">${hi(f.name,ts)}</div><div class="path">${hi(f.dir||'/',ts)}</div></div></div>${hits}
-      <div class="meta"><span>${date(f.mtime)}</span><span>${size(f.size)}</span>${warn}<span class="act"><button class="btn" data-a="open">Open</button><button class="btn" data-a="reveal">${REVEAL}</button><button class="btn" data-a="copy">Copy path</button></span></div></div>`;
-  }).join(''):`<div class="empty">${q?'No matches. Try fewer or different words, or check the folder filter.':'Nothing indexed yet.'}</div>`;
+  $('#results').innerHTML=items.length?items.map((f,i)=>card(f,i,ts)).join(''):`<div class="empty">${q?'No matches. Try fewer or different words, or check the folder filter.':'Nothing indexed yet.'}</div>`;
   $('#more').style.display=items.length<r.total?'block':'none';
 }
 $('#results').addEventListener('click',async e=>{
   const card=e.target.closest('.res'); if(!card)return;
   const f=items[+card.dataset.i], a=e.target.dataset.a||'open';
+  if(a==='sum'){if(MODE!=='ask')setMode('ask');askQ(f.id,f.name);return;}
   if(a==='copy'){
     const full=($('#rootname').dataset.root||'')+'/'+f.rel;
     try{await navigator.clipboard.writeText(full);toast('Path copied');}catch(_){toast(full);}
@@ -173,7 +229,8 @@ $('#results').addEventListener('click',async e=>{
   const j=await r.json(); toast(r.ok?(a==='reveal'?'Showing in '+(REVEAL.endsWith('Finder')?'Finder':'folder'):'Opening…'):(j.error||'Could not open'));
 });
 $('#more').onclick=()=>run(false);
-$('#q').addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(run,160);});
+$('#q').addEventListener('input',()=>{if(MODE==='ask')return;clearTimeout(timer);timer=setTimeout(run,160);});
+$('#q').addEventListener('keydown',e=>{if(MODE==='ask'&&e.key==='Enter'){e.preventDefault();e.stopPropagation();askQ();}});
 $('#sort').onchange=()=>run();$('#folder').onchange=()=>run();
 $('#filters').addEventListener('click',e=>{const c=e.target.closest('.chip');if(!c)return;
   document.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===c));type=c.dataset.t;run();});
@@ -257,7 +314,180 @@ async function folders(){
   $('#folder').innerHTML='<option value="">All folders</option>'+f.map(x=>`<option value="${esc(x.name)}">${esc(x.name)} (${x.n.toLocaleString()})</option>`).join('');
   $('#folder').value=cur;
 }
-status();folders();run();
+/* ---- Ask AI ---- */
+let MODE='search', AI={has_key:false,needs_key:true,recent:[],model:''}, turns=[], askCtl=null;
+const aiReady=()=>AI.has_key||!AI.needs_key;
+function setMode(m){
+  MODE=m; document.body.classList.toggle('ask',m==='ask');
+  document.querySelectorAll('#mode button').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
+  $('#q').placeholder=m==='ask'?'Ask a question about your files, then press Enter…':'Search file names and contents…  (press / to focus)';
+  try{localStorage.setItem('ws-mode',m);}catch(_){}
+  items=[];sel=-1;$('#results').innerHTML='';$('#more').style.display='none';
+  if(m==='ask'){
+    $('#q').value='';
+    const last=turns[turns.length-1];
+    if(last&&last.sources.length)showSources(last);else askHint();
+    loadAI();
+  }else{$('#q').value='';run();}
+  $('#q').focus();
+}
+function askHint(){
+  $('#count').innerHTML=!aiReady()?'Add your OpenRouter API key in <a class="cite" style="padding:0 .4rem" onclick="openAI()">AI settings</a> to start.'
+    :turns.length?'':'Ask anything, e.g. “what warranty did we agree with Siemens?” or “list the quotes for hydraulic pumps from last year”. The file-type buttons and folder menu limit what the AI reads.';
+}
+$('#mode').onclick=e=>{const b=e.target.closest('button');if(b&&b.dataset.m!==MODE)setMode(b.dataset.m);};
+async function loadAI(){
+  try{AI=await (await fetch('/api/ai/settings')).json();}catch(_){return;}
+  const rec=AI.recent.includes(AI.model)?AI.recent:[AI.model,...AI.recent];
+  $('#aimodel').innerHTML=rec.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')+'<option value="__more">More models…</option>';
+  $('#aimodel').value=AI.model;
+  if(MODE==='ask'&&!turns.length&&!items.length)askHint();
+}
+$('#aimodel').onchange=async e=>{
+  const m=e.target.value;
+  if(m==='__more'){e.target.value=AI.model;openAI();return;}
+  await saveAI({model:m});toast('Model: '+m);
+};
+async function saveAI(body){
+  const r=await fetch('/api/ai/settings',{method:'POST',headers:{'X-WS-Token':TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json(); if(!r.ok)throw new Error(j.error||'Could not save');
+  await loadAI(); return j;
+}
+$('#newq').onclick=()=>{if(askCtl)askCtl.abort();turns=[];$('#thread').innerHTML='';items=[];$('#results').innerHTML='';askHint();$('#q').focus();};
+$('#aiset').onclick=()=>openAI();
+
+function inl(s){
+  return s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\[(\d+(?:\s*[,;]\s*\d+)*)\]/g,(m,g)=>g.split(/\s*[,;]\s*/).map(n=>`<a class="cite" data-n="${n}">${n}</a>`).join(''));
+}
+function md(src){
+  const lines=esc(src).split('\n'); let out='',list=null,tbl=null;
+  const close=()=>{if(list){out+=`</${list}>`;list=null;}if(tbl){out+='<table>'+tbl.join('')+'</table>';tbl=null;}};
+  for(const l of lines){
+    if(/^\s*\|.*\|\s*$/.test(l)){
+      if(list){out+=`</${list}>`;list=null;}
+      if(/^\s*\|[\s:|-]+\|\s*$/.test(l))continue;
+      tbl=tbl||[]; tbl.push('<tr>'+l.trim().slice(1,-1).split('|').map(c=>`<td>${inl(c.trim())}</td>`).join('')+'</tr>'); continue;
+    }
+    if(tbl){out+='<table>'+tbl.join('')+'</table>';tbl=null;}
+    const m=l.match(/^\s*([-*•]|\d+[.)])\s+(.*)/);
+    if(m){const tag=/\d/.test(m[1])?'ol':'ul';if(list!==tag){if(list)out+=`</${list}>`;out+=`<${tag}>`;list=tag;}out+=`<li>${inl(m[2])}</li>`;continue;}
+    if(list&&!l.trim())continue;
+    if(list){out+=`</${list}>`;list=null;}
+    const h=l.match(/^#{1,6}\s+(.*)/);
+    if(h){out+=`<h4>${inl(h[1])}</h4>`;continue;}
+    if(l.trim())out+=`<p>${inl(l)}</p>`;
+  }
+  close(); return out;
+}
+function showSources(turn){
+  items=turn.sources; sel=-1;
+  $('#count').textContent=turn.sources.length?(turn.fileId?`Pages read (${turn.sources.length})`:`${turn.sources.length} pages the AI read for “${turn.q}”. The numbers match the citations.`):'';
+  const ts=terms(turn.q);
+  $('#results').innerHTML=items.map((f,i)=>card(f,i,ts)).join('');
+  $('#more').style.display='none';
+}
+$('#thread').addEventListener('click',e=>{
+  const a=e.target.closest('a.cite'); if(!a)return;
+  const el=a.closest('.turn'), turn=turns.find(t=>t.el===el); if(!turn)return;
+  if(items!==turn.sources)showSources(turn);
+  const i=turn.sources.findIndex(s=>String(s.n)===a.dataset.n); if(i<0)return;
+  const c=document.querySelectorAll('.res')[i]; if(!c)return;
+  c.scrollIntoView({block:'center',behavior:'smooth'}); c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
+});
+async function askQ(fileId,fname){
+  const q=fileId?'':$('#q').value.trim();
+  if(!fileId&&!q)return;
+  if(!aiReady()){await loadAI();if(!aiReady()){openAI();return;}}
+  if(askCtl)askCtl.abort();
+  const history=turns.filter(t=>t.a&&!t.err).map(t=>({q:t.q,a:t.a}));
+  const turn={q:fileId?'Summarise '+fname:q,a:'',sources:[],fileId};
+  turns.push(turn);
+  const el=document.createElement('div'); el.className='turn';
+  el.innerHTML=`<div class="tq">${esc(turn.q)}</div><div class="ta"></div><div class="ts busy">Starting…</div>`;
+  $('#thread').appendChild(el); turn.el=el;
+  if(!fileId)$('#q').value='';
+  items=[];$('#results').innerHTML='';$('#count').textContent='';$('#more').style.display='none';
+  el.scrollIntoView({block:'nearest',behavior:'smooth'});
+  const ts=el.querySelector('.ts'), ta=el.querySelector('.ta'); let pending=false, finished=false;
+  const ctl=askCtl=new AbortController();
+  const handle=m=>{
+    if(m.type==='status')ts.textContent=m.text;
+    else if(m.type==='sources'){turn.sources=m.sources;showSources(turn);}
+    else if(m.type==='delta'){turn.a+=m.text;if(!pending){pending=true;requestAnimationFrame(()=>{pending=false;ta.innerHTML=md(turn.a);});}}
+    else if(m.type==='error'){finished=true;turn.err=true;ts.classList.remove('busy');ts.textContent='';
+      ta.innerHTML=md(turn.a)+`<p class="err">${esc(m.error)}</p>`+(/key|settings|model/i.test(m.error)?'<button class="btn" onclick="openAI()">Open AI settings</button>':'');}
+    else if(m.type==='done'){finished=true;ta.innerHTML=md(turn.a)||'<p class="err">The model sent back an empty answer. Try again or pick another model.</p>';
+      ts.classList.remove('busy');
+      ts.textContent=[m.model,m.cost!=null?'$'+m.cost.toFixed(m.cost<0.01?4:3):'',m.tokens?m.tokens.toLocaleString()+' tokens':''].filter(Boolean).join(' · ');}
+  };
+  try{
+    const r=await fetch('/api/ask',{method:'POST',signal:ctl.signal,headers:{'X-WS-Token':TOKEN,'Content-Type':'application/json'},
+      body:JSON.stringify({q,file_id:fileId||null,history,type,folder:$('#folder').value})});
+    const rd=r.body.getReader(), dec=new TextDecoder(); let buf='';
+    for(;;){
+      const {value,done}=await rd.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true}); let i;
+      while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(line.trim())handle(JSON.parse(line));}
+    }
+    if(!finished)handle({type:'error',error:'The answer stopped before it was finished.'});
+  }catch(e){
+    if(e.name==='AbortError'){ts.classList.remove('busy');ts.textContent='Stopped.';ta.innerHTML=md(turn.a);turn.err=!turn.a;return;}
+    handle({type:'error',error:'Lost connection to WorkSearch: '+e.message});
+  }finally{if(askCtl===ctl)askCtl=null;}
+}
+
+/* ---- AI settings dialog ---- */
+let MODELS=[], chosen='', clearKey=false;
+const aidlg=$('#aidlg');
+function price(m){
+  if(m.in==null)return '';
+  if(!m.in&&!m.out)return 'free';
+  const f=x=>'$'+(x<1?x.toFixed(2).replace(/0$/,''):x.toFixed(x<10?2:0));
+  return `${f(m.in)} in · ${f(m.out)} out <small>per 1M tokens</small>`;
+}
+function drawModels(){
+  const f=$('#aifilter').value.trim().toLowerCase(), words=f.split(/\s+/).filter(Boolean);
+  let list=MODELS.filter(m=>words.every(w=>(m.id+' '+m.name).toLowerCase().includes(w)||(w==='free'&&m.in===0&&m.out===0)));
+  const so=$('#aisort').value;
+  if(so==='cheap')list=[...list].sort((a,b)=>((a.in??1e9)+(a.out??1e9))-((b.in??1e9)+(b.out??1e9)));
+  if(so==='name')list=[...list].sort((a,b)=>a.name.localeCompare(b.name));
+  let h=list.slice(0,400).map(m=>`<div data-id="${esc(m.id)}" class="${m.id===chosen?'on':''}"><span class="mn">${esc(m.name)}<small>${esc(m.id)}</small></span><span class="mp">${price(m)}${m.ctx?`<br><small>${Math.round(m.ctx/1000).toLocaleString()}K context</small>`:''}</span></div>`).join('');
+  if(f&&!MODELS.some(m=>m.id.toLowerCase()===f)&&/[\/:]/.test(f))h=`<div data-id="${esc($('#aifilter').value.trim())}"><span class="mn">Use “${esc($('#aifilter').value.trim())}” as typed</span></div>`+h;
+  $('#mlist').innerHTML=h||'<div style="cursor:default;color:var(--muted)">No models match.</div>';
+  $('#aicur').textContent=chosen?'· selected: '+chosen:'';
+}
+async function loadModels(){
+  $('#mlist').innerHTML='<div style="cursor:default;color:var(--muted)">Loading models…</div>';
+  try{
+    const r=await fetch('/api/ai/models'), j=await r.json();
+    if(!r.ok)throw new Error(j.error);
+    MODELS=j.models; $('#aimsg').textContent=`${MODELS.length.toLocaleString()} models available. Click one to select it, then Save.`;$('#aimsg').className='fnote';
+  }catch(e){MODELS=[];$('#aimsg').className='fnote bad';$('#aimsg').textContent=(e.message||'Could not load models')+' You can still type a model id (like provider/model-name) in the filter box.';}
+  drawModels();
+}
+async function openAI(){
+  await loadAI(); clearKey=false; chosen=AI.model;
+  $('#aikey').value='';
+  $('#aikey').placeholder=AI.has_key?(AI.key_from_env?'Using OPENROUTER_API_KEY from the environment':`Saved (${AI.key_hint}). Paste a new key to replace it.`):'sk-or-v1-…';
+  $('#aibase').value=AI.base_url; $('#aifilter').value='';
+  aidlg.showModal(); loadModels();
+}
+$('#aifilter').addEventListener('input',drawModels);$('#aisort').onchange=drawModels;
+$('#mlist').addEventListener('click',e=>{const d=e.target.closest('div[data-id]');if(!d)return;chosen=d.dataset.id;drawModels();});
+$('#mlist').addEventListener('dblclick',e=>{if(e.target.closest('div[data-id]'))$('#aisave').click();});
+$('#aikeyclear').onclick=()=>{clearKey=true;$('#aikey').value='';$('#aikey').placeholder='The key will be removed when you Save';};
+$('#aibasego').onclick=async()=>{try{await saveAI({base_url:$('#aibase').value.trim()});loadModels();}catch(e){$('#aimsg').className='fnote bad';$('#aimsg').textContent=e.message;}};
+$('#aicancel').onclick=()=>aidlg.close();
+$('#aisave').onclick=async()=>{
+  const body={model:chosen}, k=$('#aikey').value.trim();
+  if(k)body.key=k;else if(clearKey)body.key='';
+  try{await saveAI(body);aidlg.close();toast('AI settings saved');if(MODE==='ask'&&!turns.length)askHint();$('#q').focus();}
+  catch(e){$('#aimsg').className='fnote bad';$('#aimsg').textContent=e.message;}
+};
+
+status();folders();loadAI();
+try{if(localStorage.getItem('ws-mode')==='ask')setMode('ask');else run();}catch(_){run();}
 setInterval(status,2500);setInterval(folders,30000);
 </script>
 </body>

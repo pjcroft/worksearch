@@ -22,6 +22,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from email import policy
@@ -44,6 +46,12 @@ DEFAULTS = {
     'ocr_dpi': 250,
     'ocr_workers': 0,         # 0 = automatic (CPU cores minus 2)
     'max_extract_mb': 400,    # bigger files are indexed by name only
+    # Ask AI (OpenRouter, or any OpenAI-compatible API such as Ollama or LM Studio)
+    'ai_base_url': 'https://openrouter.ai/api/v1',
+    'ai_key': '',             # or set the OPENROUTER_API_KEY environment variable
+    'ai_model': 'openrouter/auto',
+    'ai_recent': [],          # recently used models, shown in the quick model menu
+    'ai_max_pages': 20,       # how many matching pages are sent with each question
 }
 
 KINDS = {
@@ -775,7 +783,8 @@ def make_snippet(body, pats, width=220):
     return ('… ' if lo else '') + text + (' …' if hi < len(body) else '')
 
 
-def search(conn, q, kinds, folder, sort, limit, offset):
+def filters(kinds, folder):
+    """SQL conditions on the files table (alias f) for the file-type buttons and the folder menu."""
     kinds = [k for k in (kinds or '').split(',') if k]
     where, args = [], []
     if kinds:
@@ -784,7 +793,11 @@ def search(conn, q, kinds, folder, sort, limit, offset):
     if folder:
         where.append("(f.rel LIKE ? ESCAPE '\\')")
         args.append(folder.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '/%')
-    extra = (' AND ' + ' AND '.join(where)) if where else ''
+    return where, args, (' AND ' + ' AND '.join(where)) if where else ''
+
+
+def search(conn, q, kinds, folder, sort, limit, offset):
+    where, args, extra = filters(kinds, folder)
     fq = fts_query(q)
     if not fq:
         sql = f'SELECT f.* FROM files f WHERE 1=1 {extra} ORDER BY f.mtime DESC LIMIT ? OFFSET ?'
@@ -842,6 +855,271 @@ def status_dict(ix, conn):
             'root': ix.root, 'tesseract': bool(ix.tess), 'platform': 'mac' if IS_MAC else 'linux', **ix.state}
 
 
+# ----------------------------------------------------------------------------------------
+# Ask AI: answers questions from the indexed files through OpenRouter (or any OpenAI-compatible API)
+# ----------------------------------------------------------------------------------------
+class AIError(Exception):
+    pass
+
+
+def ai_key(cfg):
+    return (cfg.get('ai_key') or os.environ.get('OPENROUTER_API_KEY') or '').strip()
+
+
+def ai_request(cfg, path, payload=None, timeout=120):
+    headers = {'Content-Type': 'application/json', 'HTTP-Referer': 'http://127.0.0.1', 'X-Title': 'WorkSearch'}
+    if ai_key(cfg):
+        headers['Authorization'] = 'Bearer ' + ai_key(cfg)
+    req = urllib.request.Request(cfg['ai_base_url'].rstrip('/') + path, headers=headers,
+                                 data=None if payload is None else json.dumps(payload).encode())
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as ex:
+        try:
+            msg = json.loads(ex.read()).get('error', {})
+            msg = msg.get('message') if isinstance(msg, dict) else str(msg)
+        except Exception:
+            msg = ''
+        hint = {401: ' Check the API key in AI settings.', 402: ' Your OpenRouter credit may have run out.',
+                404: ' The model may no longer exist; pick another in AI settings.'}.get(ex.code, '')
+        raise AIError(f'The AI service said: {msg or ex.reason} (HTTP {ex.code}).{hint}')
+    except (urllib.error.URLError, OSError) as ex:
+        raise AIError(f'Could not reach the AI service at {cfg["ai_base_url"]}: {getattr(ex, "reason", ex)}')
+
+
+_models_cache = {'at': 0, 'url': '', 'list': []}
+
+
+def ai_models(cfg):
+    """Models the service offers, with prices in dollars per million tokens (cached for an hour)."""
+    c = _models_cache
+    if c['list'] and c['url'] == cfg['ai_base_url'] and time.time() - c['at'] < 3600:
+        return c['list']
+    with ai_request(cfg, '/models', timeout=30) as r:
+        data = json.loads(r.read()).get('data') or []
+    def price(m, k):
+        try:
+            return round(float((m.get('pricing') or {})[k]) * 1e6, 4)
+        except (KeyError, TypeError, ValueError):
+            return None
+    out = [{'id': m['id'], 'name': m.get('name') or m['id'], 'ctx': m.get('context_length'),
+            'in': price(m, 'prompt'), 'out': price(m, 'completion'), 'created': m.get('created') or 0}
+           for m in data if m.get('id')]
+    out.sort(key=lambda m: -m['created'])
+    c.update(at=time.time(), url=cfg['ai_base_url'], list=out)
+    return out
+
+
+def ai_chat(cfg, messages, max_tokens=None, stream=False):
+    payload = {'model': cfg['ai_model'] or 'openrouter/auto', 'messages': messages, 'stream': stream}
+    if max_tokens:
+        payload['max_tokens'] = max_tokens
+    if 'openrouter.ai' in cfg['ai_base_url']:
+        payload['usage'] = {'include': True}  # OpenRouter then reports the cost of the request
+    return ai_request(cfg, '/chat/completions', payload, timeout=300)
+
+
+STOPWORDS = set('''a an and are as at be by can could did do does for from had has have how i in is it its me my of on or
+our that the their there these this to was we were what when where which who why will with would you your about any all
+find show tell give list please file files document documents'''.split())
+
+PLAN_PROMPT = """You turn a question into keyword searches for a full-text search engine over someone's work files \
+(quotes, orders, invoices, manuals, drawings, emails, spreadsheets, reports). A search only matches pages that contain \
+ALL of its words, so keep each search to 1-3 distinctive words. Cover likely synonyms, part numbers, company names, \
+abbreviations and alternative spellings with separate searches. Put the most specific search first. Reply with JSON \
+only, no other text: {"searches": ["...", "..."]} with 3 to 6 searches."""
+
+ANSWER_PROMPT = """You answer questions about the user's own work files, using the numbered excerpts below, which come \
+from a search of those files. Cite the excerpts you rely on with their numbers in square brackets, like [3] or [2][5], \
+right after the fact they support. If the excerpts don't contain the answer, say so plainly and suggest other words to \
+search for. Mention the file name when it helps the user find the document. Be concise: short paragraphs or bullet \
+lists. Today's date is {today}."""
+
+
+def plan_searches(cfg, question, history):
+    """Ask the model for keyword searches. Returns (searches, cost)."""
+    msgs = [{'role': 'system', 'content': PLAN_PROMPT}]
+    for t in history:
+        msgs += [{'role': 'user', 'content': t['q']}, {'role': 'assistant', 'content': t['a'][:1500]}]
+    msgs.append({'role': 'user', 'content': 'Question: ' + question})
+    cost, searches = 0.0, []
+    try:
+        with ai_chat(cfg, msgs, max_tokens=2000) as r:
+            j = json.loads(r.read())
+        cost = float((j.get('usage') or {}).get('cost') or 0)
+        text = ((j.get('choices') or [{}])[0].get('message') or {}).get('content') or ''
+        m = re.search(r'\{.*\}', text, re.S)
+        searches = [str(x) for x in json.loads(m.group(0)).get('searches', [])] if m else []
+    except (AIError, ValueError, AttributeError, TypeError) as ex:
+        log('AI search planning failed, using the question words:', ex)
+    words = [w for w in re.findall(r'\w+', question.lower()) if w not in STOPWORDS and len(w) > 2]
+    if words:
+        searches.append(' '.join(words[:3]))
+        searches += sorted(words, key=len, reverse=True)[:3]  # broad single-word fallbacks, used last
+    return list(dict.fromkeys(s.strip() for s in searches if s.strip()))[:9], cost
+
+
+def excerpt(body, pats, n=3500):
+    body = re.sub(r'[ \t]+', ' ', body)
+    if len(body) <= n:
+        return body.strip()
+    pos = min((m.start() for p in pats for m in [p.search(body)] if m), default=0)
+    lo = max(0, min(pos - 800, len(body) - n))
+    return ('… ' if lo else '') + body[lo:lo + n].strip() + ' …'
+
+
+def retrieve(conn, searches, kinds, folder, max_pages):
+    """Best pages across all searches, taking turns between searches so each one contributes."""
+    where, args, extra = filters(kinds, folder)
+    join = 'JOIN files f ON f.id=d.file_id' if where else ''
+    lists = []
+    for s in searches:
+        fq = fts_query(s + ' ')  # trailing space: whole words (plus simple endings), not prefixes
+        if not fq:
+            continue
+        try:
+            lists.append(conn.execute(f"SELECT d.rowid AS rid, d.file_id, d.page, d.label FROM docs d {join} "
+                                      f"WHERE docs MATCH ? {extra} ORDER BY bm25(docs,8.0,3.0,1.0) LIMIT 40",
+                                      [fq] + args).fetchall())
+        except sqlite3.OperationalError:
+            continue
+    picked, seen, per_file = [], set(), {}
+    for depth in range(40):
+        for rows in lists:
+            if depth < len(rows) and len(picked) < max_pages:
+                h = rows[depth]
+                if h['rid'] in seen or per_file.get(h['file_id'], 0) >= 3:
+                    continue
+                seen.add(h['rid'])
+                per_file[h['file_id']] = per_file.get(h['file_id'], 0) + 1
+                picked.append(h)
+    return picked
+
+
+def build_sources(conn, hits, pats, chars=3500):
+    meta = {}
+    for fid in {h['file_id'] for h in hits}:
+        r = conn.execute('SELECT * FROM files WHERE id=?', (fid,)).fetchone()
+        if r:
+            meta[fid] = r
+    sources = []
+    for h in hits:
+        if h['file_id'] not in meta:
+            continue
+        body = conn.execute('SELECT body FROM docs WHERE rowid=?', (h['rid'],)).fetchone()['body'] or ''
+        text = excerpt(body, pats, chars) if body.strip() else '(no readable text on this page; matched by file or folder name)'
+        snip = make_snippet(body, pats) or re.sub(r'\s+', ' ', body[:260]).strip()
+        d = file_dict(meta[h['file_id']], [{'page': h['page'], 'label': h['label'], 'snip': snip}] if snip else [])
+        d.update(n=len(sources) + 1, text=text, label=h['label'] or '')
+        sources.append(d)
+    return sources
+
+
+def file_sources(conn, file_id, max_chars=80000):
+    """All pages of one file (up to a limit), for 'Summarise'."""
+    f = conn.execute('SELECT * FROM files WHERE id=?', (file_id,)).fetchone()
+    if not f:
+        return []
+    out, used = [], 0
+    for r in conn.execute('SELECT page, label, body FROM docs WHERE file_id=? ORDER BY page', (file_id,)):
+        body = re.sub(r'[ \t]+', ' ', r['body'] or '').strip()
+        if not body or used >= max_chars:
+            continue
+        body = body[:max_chars - used]
+        used += len(body)
+        d = file_dict(f, [{'page': r['page'], 'label': r['label'], 'snip': body[:260] + ' …'}])
+        d.update(n=len(out) + 1, text=body, label=r['label'] or '')
+        out.append(d)
+    return out
+
+
+def ask(cfg, conn, body, emit):
+    """Answer a question, sending progress as dicts to emit(): status, sources, delta (answer text), done, error."""
+    question = str(body.get('q') or '').strip()
+    history = [{'q': str(t.get('q', ''))[:2000], 'a': str(t.get('a', ''))[:4000]}
+               for t in (body.get('history') or [])[-3:] if isinstance(t, dict)]
+    if not ai_key(cfg) and 'openrouter.ai' in cfg['ai_base_url']:
+        return emit({'type': 'error', 'error': 'Add your OpenRouter API key in AI settings first.'})
+    cost = 0.0
+    if body.get('file_id'):
+        history = []  # a summary stands on its own
+        emit({'type': 'status', 'text': 'Reading the file…'})
+        sources = file_sources(conn, int(body['file_id']))
+        question = question or 'Summarise this document: what it is, who it involves, the key facts, figures and dates.'
+        if not sources:
+            return emit({'type': 'error', 'error': 'This file has no readable text to summarise.'})
+    else:
+        if not question:
+            return emit({'type': 'error', 'error': 'Type a question first.'})
+        emit({'type': 'status', 'text': 'Working out what to search for…'})
+        searches, cost = plan_searches(cfg, question, history)
+        emit({'type': 'status', 'text': 'Searching: ' + ' · '.join(searches[:6])})
+        pats = highlight_terms(' '.join(searches))
+        hits = retrieve(conn, searches, body.get('type', ''), body.get('folder', ''), int(cfg.get('ai_max_pages') or 20))
+        sources = build_sources(conn, hits, pats)
+        if not sources:
+            return emit({'type': 'error', 'error': 'No matching pages were found for: ' + ', '.join(searches)
+                         + '. Try different words, or check the file-type and folder filters.'})
+    emit({'type': 'sources', 'sources': [{k: v for k, v in s.items() if k != 'text'} for s in sources]})
+    emit({'type': 'status', 'text': f'Reading {len(sources)} page{"s" if len(sources) != 1 else ""} with {cfg["ai_model"]}…'})
+    ctx = '\n\n'.join(f"[{s['n']}] File: {s['rel']}" + (f" ({s['label']})" if s['label'] else '')
+                      + f" · modified {time.strftime('%Y-%m-%d', time.localtime(s['mtime']))}\n{s['text']}" for s in sources)
+    msgs = [{'role': 'system', 'content': ANSWER_PROMPT.format(today=time.strftime('%Y-%m-%d'))}]
+    for t in history:
+        msgs += [{'role': 'user', 'content': t['q']}, {'role': 'assistant', 'content': t['a']}]
+    msgs.append({'role': 'user', 'content': f'Excerpts:\n\n{ctx}\n\nQuestion: {question}'})
+    model, usage = cfg['ai_model'], {}
+    with ai_chat(cfg, msgs, stream=True) as r:
+        for raw in r:
+            line = raw.decode('utf-8', 'replace').strip()
+            if not line.startswith('data:'):
+                continue  # blank lines and ": OPENROUTER PROCESSING" keep-alives
+            data = line[5:].strip()
+            if data == '[DONE]':
+                break
+            try:
+                j = json.loads(data)
+            except ValueError:
+                continue
+            if j.get('error'):
+                e = j['error']
+                raise AIError('The AI service said: ' + (e.get('message') if isinstance(e, dict) else str(e)))
+            model = j.get('model') or model
+            usage = j.get('usage') or usage
+            for ch in j.get('choices') or []:
+                t = (ch.get('delta') or {}).get('content')
+                if t:
+                    emit({'type': 'delta', 'text': t})
+    cost += float(usage.get('cost') or 0)
+    emit({'type': 'done', 'model': model, 'cost': cost if cost else None,
+          'tokens': (usage.get('prompt_tokens') or 0) + (usage.get('completion_tokens') or 0)})
+
+
+def ai_settings(cfg):
+    k = ai_key(cfg)
+    return {'has_key': bool(k), 'key_hint': ('…' + k[-4:]) if len(k) > 8 else ('set' if k else ''),
+            'key_from_env': bool(k) and not cfg.get('ai_key'), 'model': cfg['ai_model'],
+            'recent': cfg.get('ai_recent') or [], 'base_url': cfg['ai_base_url'],
+            'needs_key': 'openrouter.ai' in cfg['ai_base_url']}
+
+
+def set_ai_settings(cfg, body):
+    if 'key' in body:
+        cfg['ai_key'] = str(body['key'] or '').strip()
+    if body.get('base_url'):
+        u = str(body['base_url']).strip()
+        if not re.match(r'https?://', u):
+            raise AIError('The API address must start with http:// or https://')
+        cfg['ai_base_url'] = u
+    if body.get('model'):
+        m = str(body['model']).strip()
+        recent = [cfg.get('ai_model')] + (cfg.get('ai_recent') or [])  # keep the model being replaced in the quick menu
+        cfg['ai_model'] = m
+        cfg['ai_recent'] = list(dict.fromkeys(x for x in [m] + recent if x))[:8]
+    save_config(cfg)
+    return ai_settings(cfg)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'WorkSearch'
     ix = None
@@ -885,6 +1163,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, [{'name': r['top'], 'n': r['n']} for r in cols])
             if u.path == '/api/browse':
                 return self._send(200, browse(q.get('path', '')))
+            if u.path == '/api/ai/settings':
+                return self._send(200, ai_settings(self.ix.cfg))
+            if u.path == '/api/ai/models':
+                try:
+                    return self._send(200, {'models': ai_models(self.ix.cfg), 'current': self.ix.cfg['ai_model']})
+                except (AIError, ValueError) as ex:
+                    return self._send(502, {'error': str(ex)})
             if u.path == '/api/problems':
                 rows = conn.execute("SELECT id,rel,status,note FROM files WHERE status IN ('error','name-only') "
                                     "ORDER BY status, rel LIMIT 500").fetchall()
@@ -892,6 +1177,35 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
         self._send(404, {'error': 'not found'})
+
+    def _ask(self, body):
+        """Stream the answer as newline-delimited JSON so the page can show it as it is written."""
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.close_connection = True
+        def emit(obj):
+            self.wfile.write((json.dumps(obj) + '\n').encode())
+            self.wfile.flush()
+        conn = connect()
+        try:
+            ask(self.ix.cfg, conn, body, emit)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the page stopped listening (new question or closed tab)
+        except AIError as ex:
+            try:
+                emit({'type': 'error', 'error': str(ex)})
+            except OSError:
+                pass
+        except Exception as ex:
+            log('Ask AI failed:', repr(ex))
+            try:
+                emit({'type': 'error', 'error': f'Something went wrong: {ex}'})
+            except OSError:
+                pass
+        finally:
+            conn.close()
 
     def do_POST(self):
         if not self._host_ok() or self.headers.get('X-WS-Token') != self.token:
@@ -908,6 +1222,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {'ok': True})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
+        if self.path == '/api/ai/settings':
+            try:
+                return self._send(200, set_ai_settings(self.ix.cfg, body))
+            except AIError as ex:
+                return self._send(400, {'error': str(ex)})
+        if self.path == '/api/ask':
+            return self._ask(body)
         if self.path == '/api/rescan':
             self.ix.wake.set()
             return self._send(200, {'ok': True})

@@ -2,7 +2,7 @@
 
 Search the contents of everything in your Work folder: PDFs (including scanned ones), Word, Excel, PowerPoint, emails (.eml) and text files. File names and folder names are searchable too, so CAD files, photos and old `.doc`/`.xls` files can still be found by name.
 
-WorkSearch runs on your own computer. It reads the QNAP over your normal network mount, keeps its index on the computer's own drive, and shows a search page in your browser at `http://127.0.0.1:8777`. Nothing is uploaded anywhere, and the page can only be opened from that computer.
+WorkSearch runs on your own computer. It reads the QNAP over your normal network mount, keeps its index on the computer's own drive, and shows a search page in your browser at `http://127.0.0.1:8777`. Nothing is uploaded anywhere unless you use **Ask AI** (see below), and the page can only be opened from that computer.
 
 ## Install on the Mac
 
@@ -60,6 +60,30 @@ WorkSearch shows a red message with a **Change folder…** button and lists the 
 
 **macOS says it can't read a folder that is clearly mounted?** macOS can block programs from network drives. Open **System Settings → Privacy & Security → Full Disk Access**, click **+**, press **Cmd+Shift+G**, and paste the program path shown in the red message, then quit and reopen WorkSearch.
 
+## Ask AI
+
+Click **✦ Ask AI** (top right) to ask a question in plain English instead of typing search words, for example *"what warranty did we agree with Siemens on the press brake?"*. WorkSearch:
+
+1. asks the AI which words to search for, including other names, spellings and part numbers,
+2. searches your files and picks the best matching pages (20 by default),
+3. sends those pages and your question to the AI, which writes an answer. Numbers like **[2]** in the answer link to the source file below it, with the usual **Open** and **Show in folder** buttons.
+
+Ask a follow-up question and the AI remembers the last few questions. **New question** starts over. The file-type buttons and the folder menu limit which files the AI reads. Each result also gets a **✦ Summarise** button.
+
+### Setting it up
+
+It uses [OpenRouter](https://openrouter.ai), which gives one API key for models from many companies (Claude, GPT, Gemini, Llama, and others).
+
+1. Create a key at [openrouter.ai/keys](https://openrouter.ai/keys) and add some credit.
+2. In WorkSearch, click **✦ Ask AI**, then **⚙ AI settings**, and paste the key.
+3. Pick a model from the list. You can filter it by name (`claude`, `gpt`, `gemini`, `free`) and sort it by price. Click **Save**.
+
+The menu next to **AI settings** keeps your recently used models, so you can switch between them quickly. **More models…** opens the full list. Each answer shows the model that wrote it and what it cost.
+
+Pages from your files are sent to OpenRouter and the model's provider only when you ask a question. Normal searching never leaves the computer.
+
+**A model on your own computer:** under **Advanced** in AI settings, set the API address to any OpenAI-compatible service, such as Ollama (`http://localhost:11434/v1`) or LM Studio (`http://localhost:1234/v1`). Then nothing leaves the computer at all.
+
 ## Settings
 
 Settings are in `config.json` in the data folder:
@@ -74,6 +98,10 @@ Settings are in `config.json` in the data folder:
 | `ocr_lang` | `eng` | Tesseract language(s), for example `eng+ita` (Mac: `brew install tesseract-lang`; Ubuntu: `sudo apt install tesseract-ocr-ita`) |
 | `ocr_workers` | `0` (auto) | how many pages to OCR at once |
 | `max_extract_mb` | `400` | larger files are indexed by name only |
+| `ai_key` | (empty) | OpenRouter API key (set it from **AI settings**, or with the `OPENROUTER_API_KEY` environment variable) |
+| `ai_model` | `openrouter/auto` | model used by Ask AI (OpenRouter's automatic choice until you pick one) |
+| `ai_max_pages` | `20` | how many matching pages are sent with each question (more pages means better answers, but each question costs more) |
+| `ai_base_url` | `https://openrouter.ai/api/v1` | any OpenAI-compatible API |
 
 Quit WorkSearch and reopen it after editing a setting by hand. The index, `worksearch.log` and `server.log` are in the same data folder.
 
